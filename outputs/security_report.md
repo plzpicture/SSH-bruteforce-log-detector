@@ -8,12 +8,12 @@
 
 ### Password Spraying Rule
 
-- 2 or more unique usernames attempted from the same IP within 5 minutes.
+- 3 or more unique usernames attempted from the same IP within 5 minutes.
 
 ## 2. Summary
 
 - Brute Force suspicious IPs detected: 2
-- Password Spraying suspicious IPs detected: 2
+- Password Spraying suspicious IPs detected: 1
 - Time window: 5 minutes
 
 ## 3. Brute Force Suspicious IPs
@@ -27,8 +27,7 @@
 
 | IP Address | Unique Usernames | Window | Targeted Users | Time Range | Risk |
 |---|---:|---:|---|---|---|
-| 192.168.0.10 | 2 | 5 min | admin, root | 2026-06-10 10:01:12 ~ 2026-06-10 10:01:30 | Medium |
-| 203.0.113.5 | 2 | 5 min | guest, user2 | 2026-06-10 10:06:15 ~ 2026-06-10 10:08:02 | Medium |
+| 192.168.0.10 | 3 | 5 min | admin, root, test | 2026-06-10 10:01:12 ~ 2026-06-10 10:02:44 | Medium |
 
 ## 5. Graph Output
 
