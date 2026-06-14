@@ -1,18 +1,20 @@
-﻿import re
+﻿import argparse
 import csv
+import os
+import re
 from collections import defaultdict, deque
 from datetime import datetime
 
 import matplotlib.pyplot as plt
 
 
-LOG_FILE = "sample_logs/sample_auth.log"
-CSV_OUTPUT_FILE = "outputs/suspicious_ips.csv"
-REPORT_OUTPUT_FILE = "outputs/security_report.md"
-GRAPH_OUTPUT_FILE = "outputs/failed_attempts_by_ip.png"
+DEFAULT_LOG_FILE = "sample_logs/sample_auth.log"
+DEFAULT_CSV_OUTPUT_FILE = "outputs/suspicious_ips.csv"
+DEFAULT_REPORT_OUTPUT_FILE = "outputs/security_report.md"
+DEFAULT_GRAPH_OUTPUT_FILE = "outputs/failed_attempts_by_ip.png"
 
-THRESHOLD = 3
-WINDOW_MINUTES = 5
+DEFAULT_THRESHOLD = 3
+DEFAULT_WINDOW_MINUTES = 5
 
 
 def parse_failed_login(line):
@@ -110,6 +112,8 @@ def detect_with_sliding_window(events, threshold, window_minutes):
 
 
 def save_to_csv(suspicious_ips, output_file):
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
     with open(output_file, "w", newline="", encoding="utf-8-sig") as csvfile:
         fieldnames = [
             "ip",
@@ -120,14 +124,17 @@ def save_to_csv(suspicious_ips, output_file):
             "last_detected_time",
             "risk_level"
         ]
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
+
         for item in suspicious_ips:
             writer.writerow(item)
 
 
-def save_markdown_report(suspicious_ips, output_file, threshold, window_minutes):
+def save_markdown_report(suspicious_ips, output_file, threshold, window_minutes, graph_output_file):
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
     with open(output_file, "w", encoding="utf-8") as report:
         report.write("# SSH Brute Force Detection Report\n\n")
 
@@ -163,20 +170,31 @@ def save_markdown_report(suspicious_ips, output_file, threshold, window_minutes)
 
             report.write("\n")
 
-        report.write("## 4. Security Interpretation\n\n")
-        report.write(
-            "The detected IP addresses generated repeated failed SSH login attempts "
-            "within a short time window. This behavior may indicate SSH brute-force "
-            "activity or automated password guessing attempts.\n\n"
-        )
+        report.write("## 4. Graph Output\n\n")
+        report.write(f"![Failed Attempts by IP]({graph_output_file.replace('outputs/', '')})\n\n")
 
-        report.write("## 5. Limitations\n\n")
+        report.write("## 5. Security Interpretation\n\n")
+
+        if suspicious_ips:
+            report.write(
+                "The detected IP addresses generated repeated failed SSH login attempts "
+                "within a short time window. This behavior may indicate SSH brute-force "
+                "activity or automated password guessing attempts.\n\n"
+            )
+        else:
+            report.write(
+                "No IP address exceeded the configured detection threshold. "
+                "No brute-force pattern was detected under the current rule.\n\n"
+            )
+
+        report.write("## 6. Limitations\n\n")
         report.write("- This tool analyzes stored log files, not real-time traffic.\n")
         report.write("- The current detection logic is threshold-based.\n")
         report.write("- Slow brute-force attacks may avoid detection.\n")
+        report.write("- Distributed attacks from many IP addresses may not be detected.\n")
         report.write("- Different Linux distributions may use slightly different SSH log formats.\n\n")
 
-        report.write("## 6. Ethical Use\n\n")
+        report.write("## 7. Ethical Use\n\n")
         report.write(
             "This project is intended for defensive security education and authorized log analysis only. "
             "It should not be used for unauthorized access attempts, scanning, or attacking real systems.\n"
@@ -186,6 +204,8 @@ def save_markdown_report(suspicious_ips, output_file, threshold, window_minutes)
 def save_failed_attempts_graph(failed_attempts_by_ip, output_file):
     if not failed_attempts_by_ip:
         return
+
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
 
     ips = list(failed_attempts_by_ip.keys())
     counts = list(failed_attempts_by_ip.values())
@@ -201,19 +221,67 @@ def save_failed_attempts_graph(failed_attempts_by_ip, output_file):
     plt.close()
 
 
-def main():
-    events = load_failed_events(LOG_FILE)
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description="Detect suspicious SSH brute-force login attempts from Linux authentication logs."
+    )
 
+    parser.add_argument(
+        "--input",
+        default=DEFAULT_LOG_FILE,
+        help="Path to the SSH authentication log file."
+    )
+
+    parser.add_argument(
+        "--threshold",
+        type=int,
+        default=DEFAULT_THRESHOLD,
+        help="Number of failed login attempts required to flag an IP as suspicious."
+    )
+
+    parser.add_argument(
+        "--window",
+        type=int,
+        default=DEFAULT_WINDOW_MINUTES,
+        help="Time window in minutes for sliding-window detection."
+    )
+
+    parser.add_argument(
+        "--csv-output",
+        default=DEFAULT_CSV_OUTPUT_FILE,
+        help="Path to save the CSV detection report."
+    )
+
+    parser.add_argument(
+        "--report-output",
+        default=DEFAULT_REPORT_OUTPUT_FILE,
+        help="Path to save the Markdown security report."
+    )
+
+    parser.add_argument(
+        "--graph-output",
+        default=DEFAULT_GRAPH_OUTPUT_FILE,
+        help="Path to save the graph image."
+    )
+
+    return parser.parse_args()
+
+
+def main():
+    args = parse_arguments()
+
+    events = load_failed_events(args.input)
     failed_attempts_by_ip = count_failed_attempts_by_ip(events)
 
     suspicious_ips = detect_with_sliding_window(
         events,
-        THRESHOLD,
-        WINDOW_MINUTES
+        args.threshold,
+        args.window
     )
 
     print("=== SSH Brute Force Sliding Window Detection Result ===")
-    print(f"Rule: {THRESHOLD}+ failed login attempts within {WINDOW_MINUTES} minutes\n")
+    print(f"Input file: {args.input}")
+    print(f"Rule: {args.threshold}+ failed login attempts within {args.window} minutes\n")
 
     if not suspicious_ips:
         print("No suspicious IPs detected.")
@@ -227,18 +295,24 @@ def main():
                 f"Time Range: {item['first_detected_time']} ~ {item['last_detected_time']}"
             )
 
-    save_to_csv(suspicious_ips, CSV_OUTPUT_FILE)
+    save_to_csv(suspicious_ips, args.csv_output)
+
+    save_failed_attempts_graph(
+        failed_attempts_by_ip,
+        args.graph_output
+    )
+
     save_markdown_report(
         suspicious_ips,
-        REPORT_OUTPUT_FILE,
-        THRESHOLD,
-        WINDOW_MINUTES
+        args.report_output,
+        args.threshold,
+        args.window,
+        args.graph_output
     )
-    save_failed_attempts_graph(failed_attempts_by_ip, GRAPH_OUTPUT_FILE)
 
-    print(f"\nCSV result saved to {CSV_OUTPUT_FILE}")
-    print(f"Markdown report saved to {REPORT_OUTPUT_FILE}")
-    print(f"Graph saved to {GRAPH_OUTPUT_FILE}")
+    print(f"\nCSV result saved to {args.csv_output}")
+    print(f"Markdown report saved to {args.report_output}")
+    print(f"Graph saved to {args.graph_output}")
 
 
 if __name__ == "__main__":
