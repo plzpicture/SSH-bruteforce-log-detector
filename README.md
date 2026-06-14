@@ -143,3 +143,44 @@ Implemented:
 ## Graph Output
 
 ![Failed Attempts by IP](outputs/failed_attempts_by_ip.png)
+
+## Portfolio Summary
+
+### Project Type
+
+Cybersecurity / Log Analysis / Detection Engineering
+
+### Core Skills Demonstrated
+
+- Python scripting
+- Linux SSH authentication log analysis
+- Regex-based log parsing
+- Sliding Window detection
+- Brute-force detection
+- Password spraying detection
+- MITRE ATT&CK mapping
+- CSV report generation
+- Markdown security report generation
+- Graph-based visualization
+
+### Generated Outputs
+
+- `outputs/suspicious_ips.csv`
+- `outputs/password_spraying_ips.csv`
+- `outputs/security_report.md`
+- `outputs/failed_attempts_by_ip.png`
+
+### Career Relevance
+
+This project is relevant to:
+
+- SOC Analyst
+- Security Analyst
+- Cloud Security Intern
+- Detection Engineering
+- Security Automation
+- Log Analysis
+
+### Resume-ready Summary
+
+Developed a Python-based SSH security log analyzer that detects brute-force and password spraying patterns using sliding-window detection and generates CSV, Markdown, and graph-based security reports.
