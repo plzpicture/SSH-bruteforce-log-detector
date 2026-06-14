@@ -139,3 +139,7 @@ Implemented:
 ## Graph Output
 
 ![Failed Attempts by IP](outputs/failed_attempts_by_ip.png)
+
+## Graph Output
+
+![Failed Attempts by IP](outputs/failed_attempts_by_ip.png)
