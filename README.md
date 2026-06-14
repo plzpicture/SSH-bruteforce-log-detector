@@ -135,3 +135,7 @@ Implemented:
 - CSV report generation
 - Markdown report generation
 - Graph generation
+
+## Graph Output
+
+![Failed Attempts by IP](outputs/failed_attempts_by_ip.png)
