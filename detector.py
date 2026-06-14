@@ -10,11 +10,13 @@ import matplotlib.pyplot as plt
 
 DEFAULT_LOG_FILE = "sample_logs/sample_auth.log"
 DEFAULT_CSV_OUTPUT_FILE = "outputs/suspicious_ips.csv"
+DEFAULT_SPRAY_OUTPUT_FILE = "outputs/password_spraying_ips.csv"
 DEFAULT_REPORT_OUTPUT_FILE = "outputs/security_report.md"
 DEFAULT_GRAPH_OUTPUT_FILE = "outputs/failed_attempts_by_ip.png"
 
 DEFAULT_THRESHOLD = 3
 DEFAULT_WINDOW_MINUTES = 5
+DEFAULT_SPRAY_USER_THRESHOLD = 3
 
 
 def parse_failed_login(line):
@@ -105,13 +107,56 @@ def detect_with_sliding_window(events, threshold, window_minutes):
                 "targeted_users": ", ".join(sorted(targeted_users)),
                 "first_detected_time": first_detected_time.strftime("%Y-%m-%d %H:%M:%S"),
                 "last_detected_time": last_detected_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "risk_level": "High"
+                "risk_level": "High",
+                "detection_type": "Brute Force"
             })
 
     return suspicious_ips
 
 
-def save_to_csv(suspicious_ips, output_file):
+def detect_password_spraying(events, unique_user_threshold, window_minutes):
+    events_by_ip = defaultdict(list)
+
+    for event in events:
+        events_by_ip[event["ip"]].append(event)
+
+    spraying_ips = []
+    window_seconds = window_minutes * 60
+
+    for ip, ip_events in events_by_ip.items():
+        window = deque()
+        detected = False
+
+        for event in ip_events:
+            current_time = event["timestamp"]
+            window.append(event)
+
+            while (current_time - window[0]["timestamp"]).total_seconds() > window_seconds:
+                window.popleft()
+
+            unique_users = {item["username"] for item in window}
+
+            if len(unique_users) >= unique_user_threshold:
+                spraying_ips.append({
+                    "ip": ip,
+                    "unique_usernames": len(unique_users),
+                    "targeted_users": ", ".join(sorted(unique_users)),
+                    "window_minutes": window_minutes,
+                    "first_detected_time": window[0]["timestamp"].strftime("%Y-%m-%d %H:%M:%S"),
+                    "last_detected_time": window[-1]["timestamp"].strftime("%Y-%m-%d %H:%M:%S"),
+                    "risk_level": "Medium",
+                    "detection_type": "Password Spraying"
+                })
+                detected = True
+                break
+
+        if detected:
+            continue
+
+    return spraying_ips
+
+
+def save_bruteforce_csv(suspicious_ips, output_file):
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
 
     with open(output_file, "w", newline="", encoding="utf-8-sig") as csvfile:
@@ -122,7 +167,8 @@ def save_to_csv(suspicious_ips, output_file):
             "targeted_users",
             "first_detected_time",
             "last_detected_time",
-            "risk_level"
+            "risk_level",
+            "detection_type"
         ]
 
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -132,27 +178,63 @@ def save_to_csv(suspicious_ips, output_file):
             writer.writerow(item)
 
 
-def save_markdown_report(suspicious_ips, output_file, threshold, window_minutes, graph_output_file):
+def save_password_spraying_csv(spraying_ips, output_file):
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
+    with open(output_file, "w", newline="", encoding="utf-8-sig") as csvfile:
+        fieldnames = [
+            "ip",
+            "unique_usernames",
+            "targeted_users",
+            "window_minutes",
+            "first_detected_time",
+            "last_detected_time",
+            "risk_level",
+            "detection_type"
+        ]
+
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for item in spraying_ips:
+            writer.writerow(item)
+
+
+def save_markdown_report(
+    suspicious_ips,
+    spraying_ips,
+    output_file,
+    threshold,
+    window_minutes,
+    spray_user_threshold,
+    graph_output_file
+):
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
 
     with open(output_file, "w", encoding="utf-8") as report:
         report.write("# SSH Brute Force Detection Report\n\n")
 
-        report.write("## 1. Detection Rule\n\n")
+        report.write("## 1. Detection Rules\n\n")
+        report.write("### Brute Force Rule\n\n")
         report.write(
-            f"This report flags an IP address as suspicious when it generates "
-            f"{threshold} or more failed SSH login attempts within {window_minutes} minutes.\n\n"
+            f"- {threshold} or more failed SSH login attempts within {window_minutes} minutes.\n\n"
+        )
+
+        report.write("### Password Spraying Rule\n\n")
+        report.write(
+            f"- {spray_user_threshold} or more unique usernames attempted from the same IP "
+            f"within {window_minutes} minutes.\n\n"
         )
 
         report.write("## 2. Summary\n\n")
-        report.write(f"- Suspicious IPs detected: {len(suspicious_ips)}\n")
-        report.write(f"- Threshold: {threshold} failed attempts\n")
+        report.write(f"- Brute Force suspicious IPs detected: {len(suspicious_ips)}\n")
+        report.write(f"- Password Spraying suspicious IPs detected: {len(spraying_ips)}\n")
         report.write(f"- Time window: {window_minutes} minutes\n\n")
 
-        report.write("## 3. Suspicious IPs\n\n")
+        report.write("## 3. Brute Force Suspicious IPs\n\n")
 
         if not suspicious_ips:
-            report.write("No suspicious IPs were detected.\n\n")
+            report.write("No brute-force suspicious IPs were detected.\n\n")
         else:
             report.write("| IP Address | Failed Attempts | Window | Targeted Users | Time Range | Risk |\n")
             report.write("|---|---:|---:|---|---|---|\n")
@@ -170,34 +252,52 @@ def save_markdown_report(suspicious_ips, output_file, threshold, window_minutes,
 
             report.write("\n")
 
-        report.write("## 4. Graph Output\n\n")
+        report.write("## 4. Password Spraying Suspicious IPs\n\n")
+
+        if not spraying_ips:
+            report.write("No password spraying suspicious IPs were detected.\n\n")
+        else:
+            report.write("| IP Address | Unique Usernames | Window | Targeted Users | Time Range | Risk |\n")
+            report.write("|---|---:|---:|---|---|---|\n")
+
+            for item in spraying_ips:
+                time_range = f"{item['first_detected_time']} ~ {item['last_detected_time']}"
+                report.write(
+                    f"| {item['ip']} "
+                    f"| {item['unique_usernames']} "
+                    f"| {item['window_minutes']} min "
+                    f"| {item['targeted_users']} "
+                    f"| {time_range} "
+                    f"| {item['risk_level']} |\n"
+                )
+
+            report.write("\n")
+
+        report.write("## 5. Graph Output\n\n")
         report.write(f"![Failed Attempts by IP]({graph_output_file.replace('outputs/', '')})\n\n")
 
-        report.write("## 5. Security Interpretation\n\n")
+        report.write("## 6. MITRE ATT&CK Mapping\n\n")
+        report.write("- T1110 - Brute Force\n")
+        report.write("- T1110.003 - Password Spraying\n")
+        report.write("- T1021.004 - Remote Services: SSH\n\n")
 
-        if suspicious_ips:
-            report.write(
-                "The detected IP addresses generated repeated failed SSH login attempts "
-                "within a short time window. This behavior may indicate SSH brute-force "
-                "activity or automated password guessing attempts.\n\n"
-            )
-        else:
-            report.write(
-                "No IP address exceeded the configured detection threshold. "
-                "No brute-force pattern was detected under the current rule.\n\n"
-            )
+        report.write("## 7. Security Interpretation\n\n")
+        report.write(
+            "Repeated failed SSH login attempts within a short time window may indicate brute-force activity. "
+            "Attempts against multiple unique usernames from the same IP may indicate password spraying or account discovery behavior.\n\n"
+        )
 
-        report.write("## 6. Limitations\n\n")
+        report.write("## 8. Limitations\n\n")
         report.write("- This tool analyzes stored log files, not real-time traffic.\n")
         report.write("- The current detection logic is threshold-based.\n")
         report.write("- Slow brute-force attacks may avoid detection.\n")
         report.write("- Distributed attacks from many IP addresses may not be detected.\n")
         report.write("- Different Linux distributions may use slightly different SSH log formats.\n\n")
 
-        report.write("## 7. Ethical Use\n\n")
+        report.write("## 9. Ethical Use\n\n")
         report.write(
             "This project is intended for defensive security education and authorized log analysis only. "
-            "It should not be used for unauthorized access attempts, scanning, or attacking real systems.\n"
+            "It should not be used for unauthorized access attempts, scanning, password guessing, or attacking real systems.\n"
         )
 
 
@@ -223,7 +323,7 @@ def save_failed_attempts_graph(failed_attempts_by_ip, output_file):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
-        description="Detect suspicious SSH brute-force login attempts from Linux authentication logs."
+        description="Detect suspicious SSH brute-force and password spraying attempts from Linux authentication logs."
     )
 
     parser.add_argument(
@@ -236,20 +336,33 @@ def parse_arguments():
         "--threshold",
         type=int,
         default=DEFAULT_THRESHOLD,
-        help="Number of failed login attempts required to flag an IP as suspicious."
+        help="Number of failed login attempts required to flag brute force."
     )
 
     parser.add_argument(
         "--window",
         type=int,
         default=DEFAULT_WINDOW_MINUTES,
-        help="Time window in minutes for sliding-window detection."
+        help="Time window in minutes for detection."
+    )
+
+    parser.add_argument(
+        "--spray-user-threshold",
+        type=int,
+        default=DEFAULT_SPRAY_USER_THRESHOLD,
+        help="Number of unique usernames required to flag password spraying."
     )
 
     parser.add_argument(
         "--csv-output",
         default=DEFAULT_CSV_OUTPUT_FILE,
-        help="Path to save the CSV detection report."
+        help="Path to save the brute-force CSV report."
+    )
+
+    parser.add_argument(
+        "--spray-output",
+        default=DEFAULT_SPRAY_OUTPUT_FILE,
+        help="Path to save the password spraying CSV report."
     )
 
     parser.add_argument(
@@ -279,13 +392,24 @@ def main():
         args.window
     )
 
-    print("=== SSH Brute Force Sliding Window Detection Result ===")
+    spraying_ips = detect_password_spraying(
+        events,
+        args.spray_user_threshold,
+        args.window
+    )
+
+    print("=== SSH Security Log Detection Result ===")
     print(f"Input file: {args.input}")
-    print(f"Rule: {args.threshold}+ failed login attempts within {args.window} minutes\n")
+    print(f"Brute Force Rule: {args.threshold}+ failed attempts within {args.window} minutes")
+    print(
+        f"Password Spraying Rule: {args.spray_user_threshold}+ unique usernames "
+        f"within {args.window} minutes\n"
+    )
 
     if not suspicious_ips:
-        print("No suspicious IPs detected.")
+        print("No brute-force suspicious IPs detected.")
     else:
+        print("[Brute Force Detection]")
         for item in suspicious_ips:
             print(
                 f"[{item['risk_level']}] IP: {item['ip']} | "
@@ -295,22 +419,37 @@ def main():
                 f"Time Range: {item['first_detected_time']} ~ {item['last_detected_time']}"
             )
 
-    save_to_csv(suspicious_ips, args.csv_output)
+    print()
 
-    save_failed_attempts_graph(
-        failed_attempts_by_ip,
-        args.graph_output
-    )
+    if not spraying_ips:
+        print("No password spraying suspicious IPs detected.")
+    else:
+        print("[Password Spraying Detection]")
+        for item in spraying_ips:
+            print(
+                f"[{item['risk_level']}] IP: {item['ip']} | "
+                f"Unique Usernames: {item['unique_usernames']} within "
+                f"{item['window_minutes']} minutes | "
+                f"Targeted Users: {item['targeted_users']} | "
+                f"Time Range: {item['first_detected_time']} ~ {item['last_detected_time']}"
+            )
+
+    save_bruteforce_csv(suspicious_ips, args.csv_output)
+    save_password_spraying_csv(spraying_ips, args.spray_output)
+    save_failed_attempts_graph(failed_attempts_by_ip, args.graph_output)
 
     save_markdown_report(
         suspicious_ips,
+        spraying_ips,
         args.report_output,
         args.threshold,
         args.window,
+        args.spray_user_threshold,
         args.graph_output
     )
 
-    print(f"\nCSV result saved to {args.csv_output}")
+    print(f"\nBrute force CSV result saved to {args.csv_output}")
+    print(f"Password spraying CSV result saved to {args.spray_output}")
     print(f"Markdown report saved to {args.report_output}")
     print(f"Graph saved to {args.graph_output}")
 
